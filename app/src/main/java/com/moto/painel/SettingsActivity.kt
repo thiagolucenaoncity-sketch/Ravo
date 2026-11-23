@@ -101,6 +101,15 @@ class SettingsActivity : Activity() {
                 Diagnostics.setEnabled(this, !Diagnostics.enabled(this))
                 go(null)
             }, 14)
+            add(col, plainBtn("Testar RAVO completo (2 minutos)") {
+                Diagnostics.setEnabled(this, true)
+                val launch = Intent(this, MainActivity::class.java).apply {
+                    putExtra("ravo_full_app_stress", true)
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+                startActivity(launch)
+                finish()
+            }, 8)
             add(col, plainBtn("Compartilhar relatório de diagnóstico") {
                 val report = Diagnostics.exportFile(this).readText().takeLast(120000)
                 val send = Intent(Intent.ACTION_SEND).apply {

@@ -991,10 +991,17 @@ class MainActivity : Activity() {
     }
 
     private val diagnosticsSession by lazy { Diagnostics.Session(this, "original") }
+    private val fullAppStressDelegate = lazy { FullAppStress(this) }
+    private val fullAppStress by fullAppStressDelegate
+    private fun fullAppStressLazyInitialized() = fullAppStressDelegate.isInitialized()
 
     override fun onResume() {
         super.onResume()
         diagnosticsSession.start()
+        if (intent?.getBooleanExtra("ravo_full_app_stress", false) == true) {
+            intent.removeExtra("ravo_full_app_stress")
+            window.decorView.post { fullAppStress.start(120) }
+        }
         activityResumed = true
         // Se mudou alguma configuração na tela de Configurações, redesenha a tela principal
         if (Prefs.version(this) != appliedVer) {
@@ -1013,6 +1020,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        if (fullAppStressLazyInitialized()) fullAppStress.stop("activity_paused")
         diagnosticsSession.stop()
         if (updaterLazyInitialized()) ravoUpdater.onPause()
         activityResumed = false
