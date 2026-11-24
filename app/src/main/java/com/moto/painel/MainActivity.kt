@@ -2301,7 +2301,10 @@ class MainActivity : Activity() {
         if (routePoints.size > 1) {
             // A distância lateral já foi obtida na projeção para o ETA.
             val off = lastRouteOffDistanceM
-            if (off > OFF_ROUTE_M) {
+            // Fusion: a fix with unknown or poor accuracy must not trigger a reroute.
+            if (!loc.hasAccuracy() || !loc.accuracy.isFinite() || loc.accuracy <= 0f || loc.accuracy > 35f) {
+                offCount = 0
+            } else if (off.isFinite() && off > OFF_ROUTE_M + loc.accuracy.toDouble()) {
                 offCount++
                 if (offCount >= 3 && !recalculating && System.currentTimeMillis() - lastRecalcMs > 20000) {
                     recalculate(loc)
