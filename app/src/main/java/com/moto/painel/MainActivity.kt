@@ -995,13 +995,24 @@ class MainActivity : Activity() {
     private val fullAppStress by fullAppStressDelegate
     private fun fullAppStressLazyInitialized() = fullAppStressDelegate.isInitialized()
 
+    override fun onNewIntent(newIntent: android.content.Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        if (activityResumed) consumeStressRequest()
+    }
+
+    private fun consumeStressRequest() {
+        if (intent?.getBooleanExtra("ravo_full_app_stress", false) != true) return
+        intent.removeExtra("ravo_full_app_stress")
+        window.decorView.post {
+            if (activityResumed && !isFinishing) fullAppStress.start(120)
+            else intent.putExtra("ravo_full_app_stress", true)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         diagnosticsSession.start()
-        if (intent?.getBooleanExtra("ravo_full_app_stress", false) == true) {
-            intent.removeExtra("ravo_full_app_stress")
-            window.decorView.post { fullAppStress.start(120) }
-        }
         activityResumed = true
         // Se mudou alguma configuração na tela de Configurações, redesenha a tela principal
         if (Prefs.version(this) != appliedVer) {
@@ -1017,6 +1028,7 @@ class MainActivity : Activity() {
         handler.post(pollSessions)
         handler.post(eqTick)
         ravoUpdater.onResume()
+        consumeStressRequest()
     }
 
     override fun onPause() {
