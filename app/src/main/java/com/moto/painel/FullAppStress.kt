@@ -25,6 +25,8 @@ class FullAppStress(private val activity: Activity) {
     private var startedAt = 0L
     private var lastFrameNs = 0L
     private var callbacks = 0
+    private val severeGapEvents = ArrayList<Map<String, Any>>()
+    private var cpuStartMs = 0L
     private var gaps34 = 0
     private var gaps100 = 0
     private var maxGapMs = 0.0
@@ -37,7 +39,14 @@ class FullAppStress(private val activity: Activity) {
                 if (gap > 0) {
                     callbacks++
                     if (gap > 34) gaps34++
-                    if (gap > 100) gaps100++
+                    if (gap > 100) {
+                        gaps100++
+                        if (severeGapEvents.size < 300) severeGapEvents.add(mapOf(
+                            "elapsed_ms" to (SystemClock.elapsedRealtime() - startedAt),
+                            "gap_ms" to gap,
+                            "process_cpu_ms" to (android.os.Process.getElapsedCpuTime() - cpuStartMs)
+                        ))
+                    }
                     maxGapMs = maxOf(maxGapMs, gap)
                     if (samples.size < 20000) samples.add(gap)
                 }
@@ -87,6 +96,8 @@ class FullAppStress(private val activity: Activity) {
         durationMs = seconds * 1000L
         lastFrameNs = 0L
         callbacks = 0
+        severeGapEvents.clear()
+        cpuStartMs = android.os.Process.getElapsedCpuTime()
         gaps34 = 0
         gaps100 = 0
         maxGapMs = 0.0
@@ -118,6 +129,15 @@ class FullAppStress(private val activity: Activity) {
             "callback_gaps_over_34ms" to gaps34,
             "callback_gaps_over_100ms" to gaps100,
             "metric_note" to "Choreographer cadence, not GPU presented FPS"
+        ))
+        severeGapEvents.forEach { Diagnostics.event(activity, "full_app_severe_gap", it) }
+        val memory = android.os.Debug.MemoryInfo()
+        android.os.Debug.getMemoryInfo(memory)
+        Diagnostics.event(activity, "full_app_resources", mapOf(
+            "process_cpu_ms" to (android.os.Process.getElapsedCpuTime() - cpuStartMs),
+            "total_pss_kb" to memory.totalPss,
+            "native_heap_allocated_bytes" to android.os.Debug.getNativeHeapAllocatedSize(),
+            "severe_gap_events_recorded" to severeGapEvents.size
         ))
         Diagnostics.memory(activity, "full_app", 0L)
         if (reason == "completed" && !activity.isFinishing) {
