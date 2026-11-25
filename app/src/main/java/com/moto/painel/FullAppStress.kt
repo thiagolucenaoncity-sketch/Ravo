@@ -6,6 +6,12 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.Choreographer
 import android.widget.Toast
+import android.widget.TextView
+import android.widget.FrameLayout
+import android.view.Gravity
+import android.view.ViewGroup
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 
 /**
  * Measures full MainActivity frame callback cadence while the user exercises
@@ -19,6 +25,8 @@ class FullAppStress(private val activity: Activity) {
     private var startedAt = 0L
     private var lastFrameNs = 0L
     private var callbacks = 0
+    private val severeGapEvents = ArrayList<Map<String, Any>>()
+    private var cpuStartMs = 0L
     private var gaps34 = 0
     private var gaps100 = 0
     private var maxGapMs = 0.0
@@ -31,13 +39,51 @@ class FullAppStress(private val activity: Activity) {
                 if (gap > 0) {
                     callbacks++
                     if (gap > 34) gaps34++
-                    if (gap > 100) gaps100++
+                    if (gap > 100) {
+                        gaps100++
+                        if (severeGapEvents.size < 300) severeGapEvents.add(mapOf(
+                            "elapsed_ms" to (SystemClock.elapsedRealtime() - startedAt),
+                            "gap_ms" to gap,
+                            "process_cpu_ms" to (android.os.Process.getElapsedCpuTime() - cpuStartMs)
+                        ))
+                    }
                     maxGapMs = maxOf(maxGapMs, gap)
                     if (samples.size < 20000) samples.add(gap)
                 }
             }
             lastFrameNs = frameTimeNanos
             choreographer.postFrameCallback(this)
+        }
+    }
+    private var indicator: TextView? = null
+    private var durationMs = 120000L
+    private val countdown = object : Runnable {
+        override fun run() {
+            if (!running) return
+            val remaining = ((durationMs - (SystemClock.elapsedRealtime() - startedAt) + 999L) / 1000L).coerceAtLeast(0L)
+            val root = activity.window.decorView as? FrameLayout
+            if (root != null && indicator?.parent !== root) {
+                (indicator?.parent as? ViewGroup)?.removeView(indicator)
+                val density = activity.resources.displayMetrics.density
+                indicator = TextView(activity).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    setPadding((12*density).toInt(), (8*density).toInt(), (12*density).toInt(), (8*density).toInt())
+                    background = GradientDrawable().apply {
+                        setColor(0xE6192838.toInt())
+                        cornerRadius = 12*density
+                    }
+                    isClickable = false
+                    isFocusable = false
+                    elevation = 16*density
+                }
+                root.addView(indicator, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                ).apply { topMargin = (48*density).toInt() })
+            }
+            indicator?.text = String.format(java.util.Locale.US, "● TESTE EM EXECUÇÃO  %02d:%02d", remaining / 60, remaining % 60)
+            handler.postDelayed(this, 250L)
         }
     }
     private val finish = Runnable { stop("completed") }
@@ -47,15 +93,19 @@ class FullAppStress(private val activity: Activity) {
         if (!Diagnostics.enabled(activity)) Diagnostics.setEnabled(activity, true)
         running = true
         startedAt = SystemClock.elapsedRealtime()
+        durationMs = seconds * 1000L
         lastFrameNs = 0L
         callbacks = 0
+        severeGapEvents.clear()
+        cpuStartMs = android.os.Process.getElapsedCpuTime()
         gaps34 = 0
         gaps100 = 0
         maxGapMs = 0.0
         samples.clear()
         Diagnostics.event(activity, "full_app_stress_start", mapOf("seconds" to seconds))
         choreographer.postFrameCallback(frame)
-        handler.postDelayed(finish, seconds * 1000L)
+        handler.post(countdown)
+        handler.postDelayed(finish, durationMs)
         Toast.makeText(activity, "Teste RAVO iniciado: use mapa, painel e menus por ${seconds}s", Toast.LENGTH_LONG).show()
     }
 
@@ -63,6 +113,9 @@ class FullAppStress(private val activity: Activity) {
         if (!running) return
         running = false
         handler.removeCallbacks(finish)
+        handler.removeCallbacks(countdown)
+        indicator?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        indicator = null
         choreographer.removeFrameCallback(frame)
         val elapsed = SystemClock.elapsedRealtime() - startedAt
         val sorted = samples.sorted()
@@ -77,7 +130,22 @@ class FullAppStress(private val activity: Activity) {
             "callback_gaps_over_100ms" to gaps100,
             "metric_note" to "Choreographer cadence, not GPU presented FPS"
         ))
+        severeGapEvents.forEach { Diagnostics.event(activity, "full_app_severe_gap", it) }
+        val memory = android.os.Debug.MemoryInfo()
+        android.os.Debug.getMemoryInfo(memory)
+        Diagnostics.event(activity, "full_app_resources", mapOf(
+            "process_cpu_ms" to (android.os.Process.getElapsedCpuTime() - cpuStartMs),
+            "total_pss_kb" to memory.totalPss,
+            "native_heap_allocated_bytes" to android.os.Debug.getNativeHeapAllocatedSize(),
+            "severe_gap_events_recorded" to severeGapEvents.size
+        ))
         Diagnostics.memory(activity, "full_app", 0L)
-        if (reason == "completed") Toast.makeText(activity, "Teste concluído! Compartilhe o diagnóstico nas configurações.", Toast.LENGTH_LONG).show()
+        if (reason == "completed" && !activity.isFinishing) {
+            android.app.AlertDialog.Builder(activity)
+                .setTitle("Teste concluído")
+                .setMessage("Atrasos acima de 100 ms: $gaps100. Compartilhe o relatório nas configurações do RAVO.")
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 }
